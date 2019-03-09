@@ -1,0 +1,115 @@
+---
+title: "Network of Foreign Policy Experts"
+author: "Po-Sheng Lee"
+date: "2019/3/8"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r packages attaching}
+
+library(tidyverse)
+library(statnet)
+library(magrittr)
+library(readxl)
+library(sna)
+library(igraph)
+library(ggraph)
+library(knitr)
+
+```
+# Question
+
+## From Panda Huggers to Rivarly
+- Why the foreign policy changes, especially the changes of US views towrad China
+
+- The classical IR answer
+    - Realism (Here comes Mearsheimer) 
+    - Thucydides Trap by Graham Allison
+
+## Why I am not a big fan of these answers
+  
+- The presumption of nation state as the only player
+
+- The dynamics among policy makers is not captured by the theory
+    - Why the changes of U.S happened in recent years? (why not five years ago?)
+    - Why the changes are so fast and bipartisan?
+
+# A network approach 
+
+## What Network
+- Foreign policy elites network constituted by
+    - Academic, Journalists, Career Diplomat and Militaries
+
+- Structure of Network matters
+    - Duality of Network 
+        - The organization network
+        - The network of elites
+    - Cliques and Structual Holes
+        - Some elites' changes of mind can have tremendous fallout effect
+
+## Empirical Strategies
+- A sampling list from the authorship in <span style="color:blue">Foreign Affairs</span>
+    - Search in title and abstract for *China*
+
+- The biographical data from the internet
+    - The employment history
+        - Gov Employee, Gov Consultant
+    - Institutions on elite has been stayed
+        - Think Tank, University, Committees 
+    - Exclude journalists
+
+- Blockmodelling of the data
+
+## Preliminary Research Questions
+
+- What network do <span style="color:red"> Republican</span> and <span style="color:blue">Democrats</span> rely on?
+
+# Data and Results
+## Raw data
+
+```{r raw data}
+RawData <- read_excel("data/Expert Network Sociometric Dataset for analysis.xlsx", sheet = "network ")
+RawData[is.na(RawData)] <- 0
+kable(RawData)
+
+```
+
+```{r data manipulation}
+
+sociometric_translation <- RawData %>%
+  select(-c(Name, appointment_obama, appointment_bush,gov_consultant,gov_employee)) %>%
+  as.matrix()
+
+sociometric_elites <- sociometric_translation %*% t(sociometric_translation)
+sociometric_institutions <- t(sociometric_translation) %*% sociometric_translation
+
+
+sociometric_attributes <- RawData %>%
+  select(c(Name, appointment_obama, appointment_bush,gov_consultant,gov_employee))
+  
+net_elite <- network(sociometric_elites, matrix_type = "adjacency", 
+                     ignore.eval=FALSE,names.eval="membership")
+
+net_institutions <- network(sociometric_institutions, matrix_type = "adjacency",
+                            ignore.eval=FALSE,names.eval="membership")
+
+```
+
+## The network
+
+```{r drawing network}
+
+gplot(net_elite, vertex.col = 2, displaylabels = FALSE)
+gplot(net_institutions, vertex.col = 2, displaylabels = FALSE)
+
+```
+## Slide with Plot
+
+```{r pressure}
+plot(pressure)
+```
+
