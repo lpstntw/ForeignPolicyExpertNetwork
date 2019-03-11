@@ -12,13 +12,15 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 ```{r packages attaching}
 
 library(tidyverse)
+library(igraph)
+library(ggraph)
 library(statnet)
 library(magrittr)
 library(readxl)
 library(sna)
-library(igraph)
-library(ggraph)
+library(intergraph)
 library(knitr)
+library(Zelig)
 
 ```
 # Question
@@ -62,11 +64,20 @@ library(knitr)
         - Think Tank, University, Committees 
     - Exclude journalists
 
-- Blockmodelling of the data
-
 ## Preliminary Research Questions
 
 - What network do <span style="color:red"> Republican</span> and <span style="color:blue">Democrats</span> rely on?
+
+- On the elite network
+    - Actors' prominance
+        - centrality (could be a regression)
+    - Group Effect
+        - k-cores
+        - community effect
+    - Model
+        - Block Model
+        - ERGM ?
+
 
 # Data and Results
 ## Raw data
@@ -88,28 +99,175 @@ sociometric_elites <- sociometric_translation %*% t(sociometric_translation)
 sociometric_institutions <- t(sociometric_translation) %*% sociometric_translation
 
 
+## The appointment data for visualization
 sociometric_attributes <- RawData %>%
-  select(c(Name, appointment_obama, appointment_bush,gov_consultant,gov_employee))
+  select(c(Name, appointment_obama, appointment_bush,gov_consultant,gov_employee)) %>%
+  add_column(memberships = diag(sociometric_elites)) %>%
+  mutate(appointment = case_when(
+    appointment_obama == 1 & appointment_bush == 1 ~ "both",
+    appointment_obama == 0 & appointment_bush == 0 ~ "none",
+    appointment_obama == 1 & appointment_bush == 0 ~ "obama",
+    appointment_obama == 0 & appointment_bush == 1 ~ "bush"))
   
-net_elite <- network(sociometric_elites, matrix_type = "adjacency", 
+  
+  
+net_elite <- network(sociometric_elites, matrix.type = "adjacency", directed = FALSE,
                      ignore.eval=FALSE,names.eval="membership")
 
-net_institutions <- network(sociometric_institutions, matrix_type = "adjacency",
-                            ignore.eval=FALSE,names.eval="membership")
+network::set.vertex.attribute(net_elite, "vertex.names", sociometric_attributes$Name)
+network::set.vertex.attribute(net_elite, "appointment", sociometric_attributes$appointment)
+network::set.vertex.attribute(net_elite, "gov_employee", sociometric_attributes$gov_employee)
+network::set.vertex.attribute(net_elite, "gov_consultant", sociometric_attributes$gov_consultant)
+network::set.vertex.attribute(net_elite, "memberships", sociometric_attributes$memberships)
+
+
+
+net_institutions <- network(sociometric_institutions, matrix.type = "adjacency", directed = FALSE,
+                            ignore.eval=FALSE,names.eval="interlock")
+
+net_elite_igraph <- asIgraph(net_elite)
+net_institutions_igraph <- asIgraph(net_institutions)
+
+#clean the isolated one to draw the network
+net_elite_igraph_clean <- delete_vertices(net_elite_igraph, which(igraph::degree(net_elite_igraph)==0))
 
 ```
 
 ## The network
+```{r drawing elite network}
 
-```{r drawing network}
+set.seed(1069) ## transparency
+ggraph(net_elite_igraph_clean, layout = "lgl") +
+  geom_edge_link(edge_alpha = 0.1) +
+  geom_node_point(aes(color = appointment))
 
-gplot(net_elite, vertex.col = 2, displaylabels = FALSE)
-gplot(net_institutions, vertex.col = 2, displaylabels = FALSE)
 
 ```
-## Slide with Plot
 
-```{r pressure}
-plot(pressure)
+---
+
+
+```{r drawing institution network}
+
+set.seed(1069) ## transparency
+ggraph(net_institutions_igraph, layout = "fr") +
+  geom_edge_link(edge_alpha = 0.1) +
+  geom_node_text(aes(label = vertex.names), size = 1.5, repel = TRUE)
+
 ```
+
+
+## Summary of Network
+```{r descriptive of network}
+
+df_summary_network <- data.frame(
+  size = c(network.size(net_elite), network.size(net_institutions)),
+  density = c(gden(net_elite), gden(net_institutions)),
+  diameter = c(diameter(net_elite_igraph), diameter(net_institutions_igraph)),
+  clustering = c(transitivity(net_elite_igraph), transitivity(net_elite_igraph))
+)
+
+row.names(df_summary_network) <- c("Network of Elites", "Network of Institutions")
+
+kable(df_summary_network)
+
+```
+
+
+## Centrality
+
+
+```{r centrality of elite}
+
+## create a dataframe for centrality, add name
+df_centrality_elite <- data.frame(
+  eigenvector = evcent(net_elite, gmode = "graph"),
+  degree = degree(net_elite, gmode = "graph"), 
+  betweenness = betweenness(net_elite, gmode = "graph"))
+row.names(df_centrality_elite) <- net_elite %v% "vertex.names"
+
+## store the centrality to the attribute data
+sociometric_attributes %<>%
+  left_join(rownames_to_column(df_centrality_elite, var = "Name"), by = "Name")
+## order by eigenvector
+df_centrality_elite <- df_centrality_elite[order(-df_centrality_elite$eigenvector),]
+##bind the network data to the personal data
+df_centrality_elite <- rbind(c(centralization(net_elite, evcent),
+                               centralization(net_elite, degree),
+                               centralization(net_elite, betweenness)),
+                             df_centrality_elite)
+
+row.names(df_centrality_elite)[1] <- "Network Centralization"
+kable(df_centrality_elite)
+
+
+```
+
+
+---
+
+
+```{r centrality and employment}
+
+z_centrality_out1 <- zelig(appointment_obama ~ betweenness, model = "logit", 
+                           data = sociometric_attributes,cite = FALSE)
+z_centrality_out2 <- zelig(appointment_obama ~ eigenvector, model = "logit", 
+                           data = sociometric_attributes,cite = FALSE)
+z_centrality_out3 <- zelig(appointment_bush ~ betweenness, model = "logit", 
+                           data = sociometric_attributes,cite = FALSE)
+z_centrality_out4 <- zelig(appointment_bush ~ eigenvector, model = "logit", 
+                           data = sociometric_attributes,cite = FALSE)
+
+summary(z_centrality_out3, odds_ratio = TRUE)
+```
+
+
+---
+```{r centrality of institution}
+
+df_centrality_institutions <- data.frame(
+  eigenvector = evcent(net_institutions, gmode = "graph"),
+  degree = degree(net_institutions, gmode = "graph"), 
+  betweenness = betweenness(net_institutions, gmode = "graph"))
+row.names(df_centrality_institutions) <- net_institutions %v% "vertex.names"
+
+df_centrality_institutions <- df_centrality_institutions[order(-df_centrality_institutions$eigenvector), ]
+
+df_centrality_institutions <- rbind(c(centralization(net_elite, evcent),
+                                      centralization(net_elite, degree),
+                                      centralization(net_elite, betweenness)),
+                                    df_centrality_institutions)
+
+row.names(df_centrality_institutions)[1] <- "Network Centralization"
+kable(df_centrality_institutions)
+
+```
+
+## Subgroup
+```{r visualize subgroup}
+
+```
+
+## Block Model
+```{r blockmodelling}
+
+```
+
+
+## Some Challenges
+
+- Cannot ruleout the non-network effect (Data)
+    - Include some other personal data
+- Modelling Issues    
+    - Still not clear whether the block model works or not
+    - Specification of ERGM is not clear
+
+## Looking Ahead
+
+- Multiple networks 
+    - academic citation, journalist
+- The network in other countries
+
+- Long term changes of network
+
 
