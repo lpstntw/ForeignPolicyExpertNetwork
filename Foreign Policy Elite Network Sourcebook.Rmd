@@ -2,7 +2,7 @@
 title: "R Notebook: Foreign Policy Elite Network"
 author: "P.S. Lee"
 output:
-  html_document:
+  github_document:
     df_print: paged
 ---
 
