@@ -44,7 +44,7 @@ sociometric_institutions <- t(sociometric_translation) %*% sociometric_translati
 
 
 ## The appointment data for visualization
-sociometric_attributes <- RawData %>%
+sociometric_attributes_elite <- RawData %>%
   select(c(Name, appointment_obama, appointment_bush,gov_consultant,gov_employee)) %>%
   add_column(memberships = diag(sociometric_elites)) %>%
   mutate(appointment = case_when(
@@ -52,22 +52,45 @@ sociometric_attributes <- RawData %>%
     appointment_obama == 0 & appointment_bush == 0 ~ "none",
     appointment_obama == 1 & appointment_bush == 0 ~ "obama",
     appointment_obama == 0 & appointment_bush == 1 ~ "bush"))
-  
-  
+
+# Calculate the member being appointed 
+# The most economic way to calculate is through filter, select and sum by list   
+sociometric_attributes_inst <- data_frame(Name = colnames(
+  select(RawData, -c(Name, appointment_obama, appointment_bush,gov_consultant,gov_employee))),
+  appointment_obama = vector("double", length = length(Name)),
+  appointment_bush = vector("double", length = length(Name)))
+
+sociometric_attributes_inst[,2] <- RawData %>%
+  filter(appointment_obama == 1) %>%
+  select(-c(Name, appointment_obama, appointment_bush,gov_consultant,gov_employee)) %>%
+  map_dbl(.f = sum)
+
+sociometric_attributes_inst[,3] <- RawData %>%
+  filter(appointment_bush == 1) %>%
+  select(-c(Name, appointment_obama, appointment_bush,gov_consultant,gov_employee)) %>%
+  map_dbl(.f = sum)
+
+```
+
+```{r net data preparation}
   
 net_elite <- network(sociometric_elites, matrix.type = "adjacency", directed = FALSE,
                      ignore.eval=FALSE,names.eval="membership")
 
-network::set.vertex.attribute(net_elite, "vertex.names", sociometric_attributes$Name)
-network::set.vertex.attribute(net_elite, "appointment", sociometric_attributes$appointment)
-network::set.vertex.attribute(net_elite, "gov_employee", sociometric_attributes$gov_employee)
-network::set.vertex.attribute(net_elite, "gov_consultant", sociometric_attributes$gov_consultant)
-network::set.vertex.attribute(net_elite, "memberships", sociometric_attributes$memberships)
+network::set.vertex.attribute(net_elite, "vertex.names", sociometric_attributes_elite$Name)
+network::set.vertex.attribute(net_elite, "appointment", sociometric_attributes_elite$appointment)
+network::set.vertex.attribute(net_elite, "gov_employee", sociometric_attributes_elite$gov_employee)
+network::set.vertex.attribute(net_elite, "gov_consultant", sociometric_attributes_elite$gov_consultant)
+network::set.vertex.attribute(net_elite, "memberships", sociometric_attributes_elite$memberships)
 
 
 
 net_institutions <- network(sociometric_institutions, matrix.type = "adjacency", directed = FALSE,
                             ignore.eval=FALSE,names.eval="interlock")
+
+network::set.vertex.attribute(net_institutions, "vertex.names", sociometric_attributes_inst$Name)
+network::set.vertex.attribute(net_institutions, "appointment.obama", sociometric_attributes_inst$appointment_obama)
+network::set.vertex.attribute(net_institutions, "appointment.bush", sociometric_attributes_inst$appointment_bush)
 
 net_elite_igraph <- asIgraph(net_elite)
 net_institutions_igraph <- asIgraph(net_institutions)
@@ -80,7 +103,7 @@ net_elite_igraph_clean <- delete_vertices(net_elite_igraph, which(igraph::degree
 # The network
 ```{r drawing elite network}
 
-set.seed(1069) ## transparency
+set.seed(1069) ## setting transparency
 ggraph(net_elite_igraph_clean, layout = "lgl") +
   geom_edge_link(edge_alpha = 0.1) +
   geom_node_point(aes(color = appointment))
@@ -98,6 +121,8 @@ ggraph(net_institutions_igraph, layout = "fr") +
 ```
 
 ```{r descriptive of network}
+
+# set a data frame
 
 df_summary_network <- data.frame(
   size = c(network.size(net_elite), network.size(net_institutions)),
@@ -117,6 +142,7 @@ kable(df_summary_network)
 ```{r centrality of elite}
 
 ## create a dataframe for centrality, add name
+## %v% to extract network 
 df_centrality_elite <- data.frame(
   eigenvector = evcent(net_elite, gmode = "graph"),
   degree = degree(net_elite, gmode = "graph"), 
@@ -124,7 +150,7 @@ df_centrality_elite <- data.frame(
 row.names(df_centrality_elite) <- net_elite %v% "vertex.names"
 
 ## store the centrality to the attribute data
-sociometric_attributes %<>%
+sociometric_attributes_elite %<>%
   left_join(rownames_to_column(df_centrality_elite, var = "Name"), by = "Name")
 ## order by eigenvector
 df_centrality_elite <- df_centrality_elite[order(-df_centrality_elite$eigenvector),]
@@ -140,22 +166,6 @@ kable(df_centrality_elite)
 
 ```
 
-## Statistic Inference
-
-```{r centrality and employment}
-
-z_centrality_out1 <- zelig(appointment_obama ~ betweenness, model = "logit", 
-                           data = sociometric_attributes,cite = FALSE)
-z_centrality_out2 <- zelig(appointment_obama ~ eigenvector, model = "logit", 
-                           data = sociometric_attributes,cite = FALSE)
-z_centrality_out3 <- zelig(appointment_bush ~ betweenness, model = "logit", 
-                           data = sociometric_attributes,cite = FALSE)
-z_centrality_out4 <- zelig(appointment_bush ~ eigenvector, model = "logit", 
-                           data = sociometric_attributes,cite = FALSE)
-
-summary(z_centrality_out3, odds_ratio = TRUE)
-```
-
 ```{r centrality of institution}
 
 df_centrality_institutions <- data.frame(
@@ -163,6 +173,9 @@ df_centrality_institutions <- data.frame(
   degree = degree(net_institutions, gmode = "graph"), 
   betweenness = betweenness(net_institutions, gmode = "graph"))
 row.names(df_centrality_institutions) <- net_institutions %v% "vertex.names"
+
+sociometric_attributes_inst %<>%
+  left_join(rownames_to_column(df_centrality_institutions, var = "Name"), by = "Name")
 
 df_centrality_institutions <- df_centrality_institutions[order(-df_centrality_institutions$eigenvector), ]
 
@@ -176,17 +189,128 @@ kable(df_centrality_institutions)
 
 ```
 
-# Network Structure: Subgroup
-```{r subgroupping}
+## Statistic Inference
+
+```{r individual centrality and employment}
+
+z.out1 <- zelig(appointment_obama ~ betweenness, model = "logit", 
+                data = sociometric_attributes_elite,cite = FALSE)
+
+z.out2 <- zelig(appointment_obama ~ eigenvector, model = "logit", 
+                data = sociometric_attributes_elite,cite = FALSE)
+
+z.out3 <- zelig(appointment_bush ~ betweenness, model = "logit", 
+                data = sociometric_attributes_elite,cite = FALSE)
+
+z.out4 <- zelig(appointment_bush ~ eigenvector, model = "logit", 
+                data = sociometric_attributes_elite,cite = FALSE)
+
+summary(z.out1, odds_ratio = TRUE)
+summary(z.out2, odds_ratio = TRUE)
+summary(z.out3, odds_ratio = TRUE)
+summary(z.out4, odds_ratio = TRUE)
+
+```
+
+```{r institution centrality and appointment}
+
+z.out5 <- zelig(appointment_obama ~ betweenness, model = "normal", 
+                data = sociometric_attributes_inst,cite = FALSE)
+
+z.out6 <- zelig(appointment_obama ~ eigenvector, model = "normal", 
+                data = sociometric_attributes_inst,cite = FALSE)
+
+z.out7 <- zelig(appointment_bush ~ betweenness, model = "normal", 
+                data = sociometric_attributes_inst,cite = FALSE)
+
+z.out8 <- zelig(appointment_bush ~ eigenvector, model = "normal", 
+                data = sociometric_attributes_inst,cite = FALSE)
+
+summary(z.out5)
+summary(z.out6)
+summary(z.out7)
+summary(z.out8)
+
+```
+
+# Network Structure Analysis: Subgroup 
+```{r coreness}
+
+V(net_elite_igraph)$coreness <- graph.coreness(net_elite_igraph)
+net_elite_igraph_clean <- delete_vertices(net_elite_igraph, which(igraph::degree(net_elite_igraph)==0))
+
+set.seed(1069) 
+ggraph(net_elite_igraph_clean, layout = "lgl") +
+  geom_edge_link(edge_alpha = 0.1) +
+  geom_node_point(aes(color = coreness))
+
+V(net_institutions_igraph)$coreness <- graph.coreness(net_institutions_igraph)
+
+set.seed(1069)
+ggraph(net_institutions_igraph, layout = "fr") +
+  geom_edge_link(edge_alpha = 0.1) +
+  geom_node_point(aes(color = coreness), size = 2) +
+  geom_node_text(aes(label = vertex.names), size = 1.5)
+
+table(V(net_elite_igraph)$coreness)
+table(V(net_institutions_igraph)$coreness)
+
+```
+
+```{r community algorithm}
+
+elite_cluster.fg <- cluster_fast_greedy(net_elite_igraph_clean)
+elite_cluster.ev <- cluster_leading_eigen(net_elite_igraph_clean)
+
+V(net_elite_igraph_clean)$cluster.fg <- membership(elite_cluster.fg)
+V(net_elite_igraph_clean)$cluster.ev <- membership(elite_cluster.ev)
+
+set.seed(1069) 
+ggraph(net_elite_igraph_clean, layout = "lgl") +
+  geom_edge_link(edge_alpha = 0.1) +
+  geom_node_point(aes(color = cluster.ev))
+
+set.seed(1069) 
+ggraph(net_elite_igraph_clean, layout = "lgl") +
+  geom_edge_link(edge_alpha = 0.1) +
+  geom_node_point(aes(color = cluster.fg))
+  
+
+ins_cluster.fg <- cluster_fast_greedy(net_institutions_igraph)
+ins_cluster.ev <- cluster_leading_eigen(net_institutions_igraph)
+
+V(net_institutions_igraph)$cluster.fg <- as.character(membership(ins_cluster.fg))
+V(net_institutions_igraph)$cluster.ev <- as.character(membership(ins_cluster.ev))
+
+set.seed(1069)
+ggraph(net_institutions_igraph, layout = "fr") +
+  geom_edge_link(edge_alpha = 0.1) +
+  geom_node_point(aes(color = cluster.fg), size = 2) +
+  geom_node_text(aes(label = vertex.names), size = 1.5)
+
+set.seed(1069)
+ggraph(net_institutions_igraph, layout = "fr") +
+  geom_edge_link(edge_alpha = 0.1) +
+  geom_node_point(aes(color = cluster.ev), size = 2) +
+  geom_node_text(aes(label = vertex.names), size = 1.5)
+
 
 ```
 
 ```{r blockmodelling}
 
-```
+elite_cluster.se <- equiv.clust(net_elite)
+elite_blockmodel_2 <- blockmodel(net_elite, elite_cluster.se, k = 2)
+elite_blockmodel_3 <- blockmodel(net_elite, elite_cluster.se, k = 3)
+elite_blockmodel_4 <- blockmodel(net_elite, elite_cluster.se, k = 4)
 
-## Statistical Inference
-```{r blockmodel and employment}
+ins_cluster.se <- equiv.clust(net_institutions)
+ins_blockmodel_2 <- blockmodel(net_institutions, ins_cluster.se, k = 2)
+ins_blockmodel_3 <- blockmodel(net_institutions, ins_cluster.se, k = 3)
+ins_blockmodel_4 <- blockmodel(net_institutions, ins_cluster.se, k = 4)
+
+summary(elite_blockmodel_2)
+summary(ins_blockmodel_2)
 
 ```
 
