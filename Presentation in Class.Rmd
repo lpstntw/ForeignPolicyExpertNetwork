@@ -2,7 +2,7 @@
 title: "Network of Foreign Policy Experts"
 author: "Po-Sheng Lee"
 date: "2019/3/8"
-output: ioslides_presentation
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
